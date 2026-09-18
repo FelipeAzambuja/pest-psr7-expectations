@@ -1,24 +1,32 @@
 # NEWBGP Pest PSR-7 Expectations
 
 Expectations para respostas PSR-7, incluindo respostas Guzzle, em testes Pest.
-Pacote-fonte preparado para Composer; **não publicado no Packagist**.
+O pacote oferece uma API tipada para autocomplete e uma API dinâmica compatível
+com o uso tradicional de `expect()`.
 
-## Desenvolvimento
+## Compatibilidade
+
+- PHP `^8.1`.
+- Pest `^2.0`, `^3.0` ou `^4.0`.
+- PSR-7 `^1.1` ou `^2.0` (`psr/http-message`).
+- Guzzle PSR-7 é usado nos testes e é uma dependência de desenvolvimento.
+
+As versões listadas são as restrições declaradas pelo pacote. Teste a versão
+específica do Pest e a implementação PSR-7 usadas pela sua aplicação antes de
+publicar em produção. Não há compatibilidade declarada com Pest 5.
+
+Nesta alteração, a validação automatizada foi executada com PHP 8.5.10, Pest
+4.7.8, PSR HTTP Message 2.0 e Guzzle PSR-7 2.13.1. As demais versões permitidas
+pelas restrições acima não foram executadas nesta alteração.
+
+## Instalação
 
 ```bash
-composer install
-composer validate --strict
-composer test
+composer require --dev newbgp/pest-psr7-expectations guzzlehttp/guzzle
 ```
 
-PHP >=8.1. Restrições declaradas para Pest 2/3/4; cada versão do Pest exige
-sua própria versão mínima do PHP. Não foi adicionada compatibilidade com Pest 5
-sem validação. A suíte foi incluída, mas não executada durante a criação do ZIP
-porque o ambiente não tinha PHP/Composer. Valide na sua versão antes de publicar.
-
-## Instalação local no projeto consumidor
-
-Extraia este projeto ao lado da aplicação e acrescente ao composer.json dela:
+Para usar uma cópia local durante o desenvolvimento, adicione um repositório
+path ao `composer.json` da aplicação:
 
 ```json
 {
@@ -36,45 +44,71 @@ Extraia este projeto ao lado da aplicação e acrescente ao composer.json dela:
 composer require --dev newbgp/pest-psr7-expectations:@dev guzzlehttp/guzzle
 ```
 
-Em tests/Pest.php:
+## Configuração
+
+A API tipada (`expectResponse()`) é carregada automaticamente pelo Composer.
+Para preservar as expectations dinâmicas do Pest, registre-as uma vez no
+`tests/Pest.php`:
 
 ```php
+<?php
+
 use NewBGP\PestPsr7\Psr7Expectations;
 
 Psr7Expectations::register();
 ```
 
-Não é necessário instalar um plugin específico de CodeIgniter/Laravel.
-Não se usa autoload.files para executar registro implicitamente.
+O registro não é executado por `autoload.files`. Não é necessário um plugin
+específico de CodeIgniter ou Laravel.
 
-## Uso
+## API tipada — recomendada para DEVSENSE PHP Tools
+
+Prefira a função tipada no VS Code com a extensão PHP Tools da DEVSENSE. O
+editor consegue navegar para a implementação real, sugerir os métodos e
+conhecer os parâmetros e o retorno `Psr7Expectation` em todo o encadeamento:
 
 ```php
+<?php
+
 use GuzzleHttp\Client;
+use function NewBGP\PestPsr7\expectResponse;
 
 it('busca um usuário', function () {
     $client = new Client([
         'base_uri' => 'http://localhost:8080',
         'http_errors' => false,
         'allow_redirects' => false,
-        'timeout' => 10,
     ]);
 
     $response = $client->request('GET', '/api/usuarios/1');
 
-    expect($response)
+    expectResponse($response)
         ->toHaveStatus(200)
         ->toBeJsonResponse()
-        ->toHaveJsonPath('$.data.id', 1)
-        ->toHaveJson(['data' => ['id' => 1]]);
+        ->toHaveJsonPath('data.id', 1);
 });
 ```
 
-Use API e banco de teste separados. HTTP real não herda transações, mocks ou
-configuração de ambiente do processo Pest. Configure também o servidor de teste.
-Guzzle não aplica as regras CORS do navegador.
+`expectResponse()` recebe `Psr\Http\Message\ResponseInterface` e retorna
+`NewBGP\PestPsr7\Psr7Expectation`. Todos os métodos são métodos PHP reais,
+tipados e fluentes.
 
-## Expectations
+## API dinâmica do Pest
+
+Depois de `Psr7Expectations::register()`, a API original continua disponível:
+
+```php
+expect($response)
+    ->toHaveStatus(200)
+    ->toBeJsonResponse()
+    ->toHaveJsonPath('data.id', 1);
+```
+
+As duas formas podem ser usadas simultaneamente no mesmo projeto. A API
+dinâmica encaminha a execução para `Psr7Expectation`, evitando duas
+implementações das regras.
+
+## Expectations disponíveis
 
 - `toHaveStatus(int $expected)`
 - `toHaveStatusIn(array $statuses)`
@@ -103,42 +137,53 @@ Guzzle não aplica as regras CORS do navegador.
 - `toContainErrorMessage(string $expected, string $path = '$.message')`
 - `toRedirectTo(string $location, ?int $status = null)`
 
-## Semântica e limitações
+## Semântica e limitações conhecidas
 
-- Corpo: leitura completa preserva posição do stream. Streams não seekable são
-  rejeitados explicitamente; faça buffering antes de passá-los às assertions.
-- toHaveJson: subconjunto recursivo estrito; arrays numéricos são comparados por índice.
-- toHaveExactJson: comparação estrita do resultado de json_decode(..., true);
-  a ordem das chaves importa; objetos e arrays vazios decodificam ambos para [].
-- Caminhos: data.0.id ou $.data[0].id; não é JSONPath completo. Sem curingas,
-  filtros ou escape para chaves com pontos. Null existente difere de caminho ausente.
-- toHaveContentType compara o media type exato, ignorando parâmetros/maiúsculas.
-- toBeJsonResponse aceita application/json e application/*+json.
-- toHaveHeader usa substring opcional; toHaveHeaderValue compara a linha completa.
-- toBeRedirect indica classe 3xx; toRedirectTo aceita somente 301/302/303/307/308
-  e compara Location literalmente. Desative allow_redirects no Guzzle.
-- toHaveValidationErrors espera um objeto errors não vazio e verifica chaves
-  literais; não impõe status HTTP. Use toHaveStatus separadamente.
-- Negação de expectations compostas pode passar quando apenas uma condição
-  falha. Prefira assertions positivas explícitas para formato/header/body.
+- O corpo é lido completamente e a posição original de streams seekable é
+  restaurada. Streams não seekable são rejeitados explicitamente; faça
+  buffering antes de passá-los às assertions.
+- `toHaveJson` verifica um subconjunto recursivo com comparações estritas;
+  índices numéricos são preservados.
+- `toHaveExactJson` compara estritamente o resultado de
+  `json_decode(..., true)`. Objetos e arrays JSON vazios decodificam ambos para
+  `[]`.
+- Os caminhos aceitam `data.0.id` e `$.data[0].id`, mas não são JSONPath
+  completo: não há curingas, filtros ou escape para chaves com pontos. `null`
+  existente é diferente de caminho ausente.
+- `toHaveContentType` compara o media type exato, ignorando parâmetros e
+  diferenças de maiúsculas/minúsculas.
+- `toBeJsonResponse` aceita `application/json` e `application/*+json` e também
+  valida o corpo como JSON.
+- `toHaveHeader` usa substring opcional; `toHaveHeaderValue` compara a linha
+  completa do header.
+- `toBeRedirect` verifica a classe 3xx. `toRedirectTo` aceita somente 301, 302,
+  303, 307 e 308, e compara `Location` literalmente. Desative
+  `allow_redirects` no Guzzle para validar a resposta de redirect.
+- `toHaveValidationErrors` espera um objeto `errors` não vazio e não impõe
+  status HTTP; use `toHaveStatus` separadamente.
+- A API tipada não fornece a sintaxe de negação do Pest (`->not`). Para negação,
+  use a API dinâmica registrada.
 
-## Autocomplete
-
-As extensões são dinâmicas: remover $this dos testes **não garante autocomplete**
-para toHaveStatus e demais métodos em todo IDE. O suporte depende da integração
-do Pest no editor ou de stubs específicos. As classes auxiliares são tipadas.
-Use ClientInterface::request(), método real da interface, em vez de depender de
-get()/post() mágicos para autocomplete.
-
-## Publicar
-
-1. Revise nome, licença, README e execute testes nas versões que pretende suportar.
-2. Crie um repositório Git e envie os arquivos (sem vendor/).
-3. Crie a tag v0.1.0 e envie a tag.
-4. Cadastre a URL do repositório em https://packagist.org/packages/submit.
-
-Após publicação, o consumidor poderá instalar sem o repositório path:
+## Desenvolvimento
 
 ```bash
-composer require --dev newbgp/pest-psr7-expectations
+composer install
+composer validate --strict
+composer dump-autoload
+composer test
 ```
+
+O projeto não declara ferramentas adicionais de análise ou formatação no
+`composer.json`.
+
+Use API e banco de teste separados. HTTP real não herda transações, mocks ou
+configuração de ambiente do processo Pest. Configure também o servidor de
+teste. Guzzle não aplica as regras CORS do navegador.
+
+## Publicação
+
+1. Revise nome, licença, README e execute testes nas versões que pretende
+   suportar.
+2. Envie os arquivos para um repositório Git, sem `vendor/`.
+3. Crie a tag de versão e envie a tag.
+4. Cadastre a URL do repositório em <https://packagist.org/packages/submit>.
